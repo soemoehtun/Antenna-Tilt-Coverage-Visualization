@@ -163,6 +163,9 @@ export default function App() {
   );
 
   const updateNumber = (key: keyof FormState, value: string) => {
+    // Don't overwrite state for in-progress input (clearing, lone minus/dot).
+    // This lets the user empty a field without it snapping back to 0.
+    if (value === "" || value === "-" || value === ".") return;
     setForm((current) => ({ ...current, [key]: Number(value) }));
   };
 
@@ -1096,6 +1099,14 @@ function Field({
   suffix?: string;
   onChange: (value: string) => void;
 }) {
+  // Local text buffer so the field can be fully cleared while editing.
+  // It syncs from the numeric prop only when that prop actually changes.
+  const [text, setText] = useState(() => String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
   return (
     <label className="flex items-center gap-3">
       <span className="w-24 shrink-0 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
@@ -1104,9 +1115,13 @@ function Field({
       <div className="flex flex-1 items-center overflow-hidden border border-slate-200 rounded-md bg-white hover:border-slate-300 focus-within:border-slate-400 transition">
         <input
           type="number"
-          value={value}
+          value={text}
           step={step}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value);
+            onChange(event.target.value);
+          }}
+          onBlur={() => setText(String(value))}
           className="w-full bg-transparent px-2.5 py-1.5 text-[12px] text-slate-800 outline-none"
         />
         {suffix && (

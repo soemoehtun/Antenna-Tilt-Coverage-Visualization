@@ -268,11 +268,12 @@ export default function ElevationProfile({
 
   return (
     <div className="bg-white">
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-[#fbfbfb]">
+      <div className="overflow-x-auto overflow-y-hidden rounded-md border border-slate-200 bg-[#fbfbfb]">
         <svg
           viewBox={`0 0 ${CHART.width} ${CHART.height}`}
-          className="block h-[200px] w-full select-none sm:h-[240px] md:h-[260px]"
-          preserveAspectRatio="none"
+          className="block w-full select-none"
+          style={{ aspectRatio: "1200 / 260", height: "auto", minHeight: "180px" }}
+          preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Terrain elevation profile"
           onMouseLeave={() => { setHoverIndex(null); onHoverLocation?.(null); }}
@@ -338,17 +339,35 @@ export default function ElevationProfile({
             <g pointerEvents="none">
               <line x1={model.toX(hoverPoint.distance)} x2={model.toX(hoverPoint.distance)} y1={CHART.top} y2={CHART.top + model.plotH} stroke="#0f172a" strokeWidth="0.6" opacity="0.4" />
               <circle cx={model.toX(hoverPoint.distance)} cy={model.toY(hoverPoint.elevation)} r="3" fill="#7c2d12" stroke="white" strokeWidth="1" />
-              <g transform={`translate(${Math.min(model.toX(hoverPoint.distance) + 12, CHART.width - CHART.right - 180)} ${CHART.top + 10})`}>
-                <rect width="168" height="82" rx="6" fill="white" stroke="#cbd5e1" strokeWidth="1.5" className="shadow-md" />
-                <rect x="0" y="0" width="168" height="26" rx="6" fill="#f8fafc" />
-                <rect x="0" y="20" width="168" height="6" fill="#f8fafc" />
-                <text x="12" y="18" fill="#0f172a" fontSize="11" fontWeight="700">{formatDistLabel(hoverPoint.distance)}</text>
-                <text x="12" y="42" fill="#475569" fontSize="9.5">Elev: {formatElevLabel(hoverPoint.elevation)}</text>
-                <text x="12" y="58" fill="#b45309" fontSize="9.5">Beam: {formatElevLabel(hoverRay)}</text>
-                <text x="12" y="74" fill={hoverClearance >= 0 ? "#15803d" : "#b91c1c"} fontSize="9" fontWeight="700">
-                  {hoverClearance >= 0 ? `+${formatElevLabel(hoverClearance)} clearance` : `${formatElevLabel(Math.abs(hoverClearance))} blocked`}
-                </text>
-              </g>
+              {(() => {
+                // Keep the card fully inside the chart on any screen size
+                const cardW = 168;
+                const cardH = 82;
+                const cardX = Math.min(
+                  model.toX(hoverPoint.distance) + 12,
+                  model.plotW + CHART.left - cardW - 4,
+                );
+                const cardY = Math.max(
+                  CHART.top + 4,
+                  Math.min(
+                    model.toY(hoverPoint.elevation) - cardH / 2,
+                    CHART.top + model.plotH - cardH - 4,
+                  ),
+                );
+                return (
+                  <g transform={`translate(${cardX} ${cardY})`}>
+                    <rect width={cardW} height={cardH} rx="6" fill="white" stroke="#cbd5e1" strokeWidth="1.5" />
+                    <rect x="0" y="0" width={cardW} height="26" rx="6" fill="#f8fafc" />
+                    <rect x="0" y="20" width={cardW} height="6" fill="#f8fafc" />
+                    <text x="12" y="18" fill="#0f172a" fontSize="11" fontWeight="700">{formatDistLabel(hoverPoint.distance)}</text>
+                    <text x="12" y="42" fill="#475569" fontSize="9.5">Elev: {formatElevLabel(hoverPoint.elevation)}</text>
+                    <text x="12" y="58" fill="#b45309" fontSize="9.5">Beam: {formatElevLabel(hoverRay)}</text>
+                    <text x="12" y="74" fill={hoverClearance >= 0 ? "#15803d" : "#b91c1c"} fontSize="9" fontWeight="700">
+                      {hoverClearance >= 0 ? `+${formatElevLabel(hoverClearance)} clearance` : `${formatElevLabel(Math.abs(hoverClearance))} blocked`}
+                    </text>
+                  </g>
+                );
+              })()}
             </g>
           )}
         </svg>
