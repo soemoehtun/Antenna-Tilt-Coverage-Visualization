@@ -10,8 +10,6 @@ export type ProfileBeam = {
   name: string;
   angle: number;
   color: string;
-  /** Coverage-result ground distance (from Calculate). Rays are drawn to this. */
-  distance?: number;
 };
 
 type DistanceUnit = "km" | "m" | "ft";
@@ -42,7 +40,8 @@ type ElevationProfileProps = {
   onHoverLocation?: (loc: HoverLocation | null) => void;
 };
 
-const CHART = { left: 48, right: 16, top: 14, bottom: 30, width: 1200, height: 260 };
+// Canvas with left padding for Y-axis elevation labels
+const CHART = { left: 44, right: 8, top: 8, bottom: 22, width: 1200, height: 220 };
 const DENSE_POINTS = 260;
 
 export type RayIntersection = {
@@ -83,9 +82,9 @@ export default function ElevationProfile({
   const isFeet = distanceUnit === "ft";
 
   const formatDistAxis = (meters: number) => {
-    if (distanceUnit === "ft") return `${(meters * 3.28084).toFixed(0)}`;
-    if (distanceUnit === "m") return `${meters.toFixed(0)}`;
-    return `${(meters / 1000).toFixed(1)}`;
+    if (distanceUnit === "ft") return `${(meters * 3.28084).toFixed(0)} ft`;
+    if (distanceUnit === "m") return `${meters.toFixed(0)} m`;
+    return `${(meters / 1000).toFixed(1)} km`;
   };
 
   const formatDistLabel = (meters: number) => {
@@ -160,7 +159,7 @@ export default function ElevationProfile({
       }
     });
 
-    // RF signal scoring
+    // RF signal scoring along the terrain
     let maxHorizonAngle = -Infinity;
     const denseSegments: DenseSegment[] = [];
     const halfBw = Math.max(verticalBeamwidth / 2, 0.5);
@@ -255,7 +254,6 @@ export default function ElevationProfile({
       terrain: pt.elevation,
       clearance: ray - pt.elevation,
     });
-    // only on hoverIndex change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hoverIndex]);
 
@@ -264,15 +262,15 @@ export default function ElevationProfile({
   const hoverClearance = hoverPoint && hoverRay !== null ? hoverRay - hoverPoint.elevation : null;
 
   const yTicks = Array.from({ length: 4 }, (_, i) => model.maxE - (i / 3) * (model.maxE - model.minE));
-  const xTicks = Array.from({ length: 5 }, (_, i) => (i / 4) * model.maxDistance);
+  const xTicks = Array.from({ length: 6 }, (_, i) => (i / 5) * model.maxDistance);
 
   return (
-    <div className="bg-white">
-      <div className="overflow-x-auto overflow-y-hidden rounded-md border border-slate-200 bg-[#fbfbfb]">
+    <div className="w-full bg-white select-none">
+      <div className="relative w-full overflow-hidden bg-slate-50">
         <svg
           viewBox={`0 0 ${CHART.width} ${CHART.height}`}
-          className="block w-full select-none"
-          style={{ aspectRatio: "1200 / 260", height: "auto", minHeight: "180px" }}
+          className="block w-full"
+          style={{ aspectRatio: "1200 / 280", height: "auto", width: "100%" }}
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Terrain elevation profile"
@@ -280,90 +278,193 @@ export default function ElevationProfile({
         >
           <defs>
             <linearGradient id="geSky" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#dbeafe" />
-              <stop offset="100%" stopColor="#ffffff" />
+              <stop offset="0%" stopColor="#e0f2fe" stopOpacity="0.8" />
+              <stop offset="100%" stopColor="#f8fafc" stopOpacity="0.4" />
             </linearGradient>
             <linearGradient id="geTerrainFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#b08968" stopOpacity="0.55" />
-              <stop offset="100%" stopColor="#e8dcc8" stopOpacity="0.25" />
+              <stop offset="0%" stopColor="#94a3b8" stopOpacity="0.45" />
+              <stop offset="100%" stopColor="#e2e8f0" stopOpacity="0.15" />
             </linearGradient>
             <linearGradient id="geFootprint" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#facc15" stopOpacity="0.2" />
+              <stop offset="0%" stopColor="#facc15" stopOpacity="0.25" />
               <stop offset="100%" stopColor="#facc15" stopOpacity="0.04" />
             </linearGradient>
           </defs>
 
-          <rect x={CHART.left} y={CHART.top} width={model.plotW} height={model.plotH} fill="url(#geSky)" />
+          {/* Sky background */}
+          <rect x={CHART.left} y={0} width={model.plotW} height={model.plotH + CHART.top} fill="url(#geSky)" />
 
+          {/* Y-axis elevation grid lines and labels */}
           {yTicks.map((t) => (
             <g key={`y-${t}`}>
-              <line x1={CHART.left} x2={CHART.width - CHART.right} y1={model.toY(t)} y2={model.toY(t)} stroke="#e2e8f0" strokeWidth="0.5" />
-              <text x={CHART.left - 4} y={model.toY(t) + 3} textAnchor="end" fill="#94a3b8" fontSize="8">{formatElevLabel(t)}</text>
-            </g>
-          ))}
-          {xTicks.map((t) => (
-            <g key={`x-${t}`}>
-              <line x1={model.toX(t)} x2={model.toX(t)} y1={CHART.top} y2={CHART.top + model.plotH} stroke="#f1f5f9" strokeWidth="0.5" />
-              <text x={model.toX(t)} y={CHART.height - 6} textAnchor="middle" fill="#94a3b8" fontSize="8">{formatDistAxis(t)}</text>
+              <line
+                x1={CHART.left}
+                x2={CHART.width - CHART.right}
+                y1={model.toY(t)}
+                y2={model.toY(t)}
+                stroke="#e2e8f0"
+                strokeWidth="0.6"
+                strokeDasharray="4 4"
+              />
+              <text
+                x={CHART.left - 6}
+                y={model.toY(t) + 3}
+                textAnchor="end"
+                fill="#64748b"
+                fontSize="9"
+                fontWeight="600"
+                fontFamily="ui-sans-serif, system-ui, sans-serif"
+              >
+                {formatElevLabel(t)}
+              </text>
             </g>
           ))}
 
+          {/* Vertical distance grid lines and labels */}
+          {xTicks.map((t, idx) => (
+            <g key={`x-${t}`}>
+              <line
+                x1={model.toX(t)}
+                x2={model.toX(t)}
+                y1={CHART.top}
+                y2={CHART.top + model.plotH}
+                stroke="#e2e8f0"
+                strokeWidth="0.6"
+                strokeDasharray="4 4"
+              />
+              <text
+                x={Math.max(20, Math.min(model.toX(t), CHART.width - 24))}
+                y={CHART.height - 6}
+                textAnchor={idx === 0 ? "start" : idx === xTicks.length - 1 ? "end" : "middle"}
+                fill="#64748b"
+                fontSize="10"
+                fontWeight="600"
+                fontFamily="ui-sans-serif, system-ui, sans-serif"
+              >
+                {formatDistAxis(t)}
+              </text>
+            </g>
+          ))}
+
+          {/* Beam lobe footprint polygon */}
           <polygon points={model.lobePoly} fill="url(#geFootprint)" stroke="none" />
+
+          {/* Terrain fill */}
           <polygon points={model.terrainArea} fill="url(#geTerrainFill)" />
 
+          {/* Color-scored RF signal terrain segments */}
           {model.denseSegments.map((seg, idx) => (
-            <line key={`seg-${idx}`} x1={model.toX(seg.d1)} y1={model.toY(seg.z1)} x2={model.toX(seg.d2)} y2={model.toY(seg.z2)} stroke={seg.color} strokeWidth="2" strokeLinecap="round" />
+            <line
+              key={`seg-${idx}`}
+              x1={model.toX(seg.d1)}
+              y1={model.toY(seg.z1)}
+              x2={model.toX(seg.d2)}
+              y2={model.toY(seg.z2)}
+              stroke={seg.color}
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            />
           ))}
 
+          {/* Beam rays */}
           {model.beamLines.map((b) => (
-            <polyline key={b.name} points={b.points} fill="none" stroke={b.color} strokeWidth={b.name === "Central" ? 1.8 : 1.2} strokeDasharray={b.name === "Central" ? undefined : "6 4"} opacity={b.name === "Central" ? 0.95 : 0.7} />
+            <polyline
+              key={b.name}
+              points={b.points}
+              fill="none"
+              stroke={b.color}
+              strokeWidth={b.name === "Central" ? 2.2 : 1.4}
+              strokeDasharray={b.name === "Central" ? undefined : "6 4"}
+              opacity={b.name === "Central" ? 1 : 0.75}
+            />
           ))}
 
-          <line x1={model.toX(0)} x2={model.toX(0)} y1={model.toY(siteGroundAmsl)} y2={model.toY(antennaAmsl)} stroke="#d51010" strokeWidth="2.5" strokeLinecap="round" />
-          <circle cx={model.toX(0)} cy={model.toY(antennaAmsl)} r="3.5" fill="#d51010" stroke="white" strokeWidth="1" />
+          {/* Antenna mast at site (x = 0) */}
+          <line
+            x1={model.toX(0) + 1.5}
+            x2={model.toX(0) + 1.5}
+            y1={model.toY(siteGroundAmsl)}
+            y2={model.toY(antennaAmsl)}
+            stroke="#d51010"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+          />
+          <circle cx={model.toX(0) + 1.5} cy={model.toY(antennaAmsl)} r="4" fill="#d51010" stroke="white" strokeWidth="1.5" />
 
+          {/* Ray-terrain intersection markers */}
           {model.intersections.map((hit) => (
             <g key={`hit-${hit.beamName}`}>
-              <circle cx={model.toX(hit.distance)} cy={model.toY(hit.elevation)} r="3.5" fill="white" stroke={hit.color} strokeWidth="1.8" />
+              <circle cx={model.toX(hit.distance)} cy={model.toY(hit.elevation)} r="4" fill="white" stroke={hit.color} strokeWidth="2.2" />
             </g>
           ))}
 
-          <line x1={CHART.left} x2={CHART.width - CHART.right} y1={CHART.top + model.plotH} y2={CHART.top + model.plotH} stroke="#cbd5e1" strokeWidth="0.6" />
-          <line x1={CHART.left} x2={CHART.left} y1={CHART.top} y2={CHART.top + model.plotH} stroke="#cbd5e1" strokeWidth="0.6" />
+          {/* Baseline axis line */}
+          <line x1={0} x2={CHART.width} y1={CHART.top + model.plotH} y2={CHART.top + model.plotH} stroke="#cbd5e1" strokeWidth="1" />
 
+          {/* Hover detector zones */}
           {model.densePoints.map((p, i) => (
-            <rect key={`ha-${i}`} x={model.toX(p.distance) - 3} y={CHART.top} width="6" height={model.plotH} fill="transparent" onMouseEnter={() => setHoverIndex(i)} />
+            <rect
+              key={`ha-${i}`}
+              x={model.toX(p.distance) - (CHART.width / DENSE_POINTS) / 2}
+              y={0}
+              width={CHART.width / DENSE_POINTS}
+              height={CHART.top + model.plotH}
+              fill="transparent"
+              onMouseEnter={() => setHoverIndex(i)}
+            />
           ))}
 
+          {/* Interactive hover crosshair and card */}
           {hoverPoint && hoverRay !== null && hoverClearance !== null && (
             <g pointerEvents="none">
-              <line x1={model.toX(hoverPoint.distance)} x2={model.toX(hoverPoint.distance)} y1={CHART.top} y2={CHART.top + model.plotH} stroke="#0f172a" strokeWidth="0.6" opacity="0.4" />
-              <circle cx={model.toX(hoverPoint.distance)} cy={model.toY(hoverPoint.elevation)} r="3" fill="#7c2d12" stroke="white" strokeWidth="1" />
+              <line
+                x1={model.toX(hoverPoint.distance)}
+                x2={model.toX(hoverPoint.distance)}
+                y1={0}
+                y2={CHART.top + model.plotH}
+                stroke="#0f172a"
+                strokeWidth="1"
+                strokeDasharray="2 2"
+                opacity="0.6"
+              />
+              <circle cx={model.toX(hoverPoint.distance)} cy={model.toY(hoverPoint.elevation)} r="4.5" fill="#0f172a" stroke="white" strokeWidth="2" />
               {(() => {
-                // Keep the card fully inside the chart on any screen size
-                const cardW = 168;
-                const cardH = 82;
+                const cardW = 175;
+                const cardH = 86;
                 const cardX = Math.min(
-                  model.toX(hoverPoint.distance) + 12,
-                  model.plotW + CHART.left - cardW - 4,
+                  Math.max(12, model.toX(hoverPoint.distance) + 12),
+                  CHART.width - cardW - 12,
                 );
                 const cardY = Math.max(
-                  CHART.top + 4,
+                  CHART.top + 6,
                   Math.min(
                     model.toY(hoverPoint.elevation) - cardH / 2,
-                    CHART.top + model.plotH - cardH - 4,
+                    CHART.top + model.plotH - cardH - 6,
                   ),
                 );
                 return (
                   <g transform={`translate(${cardX} ${cardY})`}>
-                    <rect width={cardW} height={cardH} rx="6" fill="white" stroke="#cbd5e1" strokeWidth="1.5" />
-                    <rect x="0" y="0" width={cardW} height="26" rx="6" fill="#f8fafc" />
-                    <rect x="0" y="20" width={cardW} height="6" fill="#f8fafc" />
-                    <text x="12" y="18" fill="#0f172a" fontSize="11" fontWeight="700">{formatDistLabel(hoverPoint.distance)}</text>
-                    <text x="12" y="42" fill="#475569" fontSize="9.5">Elev: {formatElevLabel(hoverPoint.elevation)}</text>
-                    <text x="12" y="58" fill="#b45309" fontSize="9.5">Beam: {formatElevLabel(hoverRay)}</text>
-                    <text x="12" y="74" fill={hoverClearance >= 0 ? "#15803d" : "#b91c1c"} fontSize="9" fontWeight="700">
-                      {hoverClearance >= 0 ? `+${formatElevLabel(hoverClearance)} clearance` : `${formatElevLabel(Math.abs(hoverClearance))} blocked`}
+                    <rect width={cardW} height={cardH} rx="7" fill="white" stroke="#94a3b8" strokeWidth="1.2" filter="drop-shadow(0 4px 6px rgba(0,0,0,0.1))" />
+                    <rect x="0" y="0" width={cardW} height="26" rx="7" fill="#0f172a" />
+                    <rect x="0" y="20" width={cardW} height="6" fill="#0f172a" />
+                    <text x="12" y="17" fill="white" fontSize="11" fontWeight="700" fontFamily="ui-sans-serif, system-ui, sans-serif">
+                      {formatDistLabel(hoverPoint.distance)}
+                    </text>
+                    <text x="12" y="44" fill="#475569" fontSize="10" fontWeight="600" fontFamily="ui-sans-serif, system-ui, sans-serif">
+                      Terrain: <tspan fill="#0f172a">{formatElevLabel(hoverPoint.elevation)}</tspan>
+                    </text>
+                    <text x="12" y="60" fill="#475569" fontSize="10" fontWeight="600" fontFamily="ui-sans-serif, system-ui, sans-serif">
+                      Center Beam: <tspan fill="#b45309">{formatElevLabel(hoverRay)}</tspan>
+                    </text>
+                    <text
+                      x="12"
+                      y="76"
+                      fill={hoverClearance >= 0 ? "#16a34a" : "#dc2626"}
+                      fontSize="9.5"
+                      fontWeight="700"
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    >
+                      {hoverClearance >= 0 ? `Clearance: +${formatElevLabel(hoverClearance)}` : `Blocked: ${formatElevLabel(Math.abs(hoverClearance))}`}
                     </text>
                   </g>
                 );

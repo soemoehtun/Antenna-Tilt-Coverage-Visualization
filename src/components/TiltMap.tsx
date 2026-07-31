@@ -3,7 +3,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { destinationPoint, normalizeBearing, sectorPolygon, toDegrees, toRadians } from "../lib/geo";
 
-export type BaseMapId = "light" | "streets" | "satellite";
+export type BaseMapId = "light" | "streets" | "satellite" | "topo";
 
 export interface DisplayBeam {
   name: string;
@@ -63,6 +63,11 @@ const BASE_LAYERS: Record<BaseMapId, { url: string; attribution: string }> = {
   satellite: {
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     attribution: "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics",
+  },
+  topo: {
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    attribution:
+      'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
   },
 };
 

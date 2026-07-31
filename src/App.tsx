@@ -65,7 +65,7 @@ const initialState: FormState = {
   azimuth: 120,
   tilt: 8,
   horizontalBeamwidth: 30,
-  verticalBeamwidth: 3,
+  verticalBeamwidth: 6.5,
   receiverHeight: 0,
   targetDistance: 5442,
 };
@@ -74,16 +74,30 @@ export default function App() {
   const [form, setForm] = useState<FormState>(initialState);
   const [baseMap, setBaseMap] = useState<BaseMapId>("light");
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>("m");
+  const [targetDistanceUnit, setTargetDistanceUnit] = useState<DistanceUnit>("m");
   const [showRings, setShowRings] = useState(true);
   const [showElevationChart, setShowElevationChart] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSamples, setProfileSamples] = useState<ElevationSample[]>([]);
   const [profileRange, setProfileRange] = useState<number | "auto">("auto");
+  const [showProfileOnCalculate, setShowProfileOnCalculate] = useState(true);
   const [coverage, setCoverage] = useState<CoverageResult | null>(null);
   const [solveMode, setSolveMode] = useState<SolveMode>("distance");
   const [hoverLocation, setHoverLocation] = useState<{ lat: number; lon: number } | null>(null);
   const [showLegend, setShowLegend] = useState(true);
+  // Terrain-adjusted beam stats (distance / actual elevation / blockage) found
+  // by the elevation chart, keyed by Lower (-3 dB) / Central / Upper (-3dB).
+  // Updated when the chart samples terrain; cleared when the site moves.
+  const [legendStats, setLegendStats] = useState<{
+    inner?: BeamStat;
+    center?: BeamStat;
+    outer?: BeamStat;
+  }>({});
+
+  type BeamStat =
+    | { status: "clear" }
+    | { status: "blocked"; distance: number; elevation: number; block: number };
   // Slide-in sidebar (open by default on desktop, closed on mobile)
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== "undefined") return window.innerWidth >= 768;
@@ -169,6 +183,28 @@ export default function App() {
     setForm((current) => ({ ...current, [key]: Number(value) }));
   };
 
+  const distanceToSelectedUnit = (meters: number, unit: DistanceUnit) => {
+    if (unit === "km") return Math.round((meters / 1000) * 1000) / 1000;
+    if (unit === "ft") return Math.round(meters * 3.28084);
+    return Math.round(meters * 10) / 10;
+  };
+
+  const selectedUnitToMeters = (value: number, unit: DistanceUnit) => {
+    if (unit === "km") return value * 1000;
+    if (unit === "ft") return value / 3.28084;
+    return value;
+  };
+
+  const updateTargetDistance = (value: string) => {
+    if (value === "" || value === "-" || value === ".") return;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    setForm((current) => ({
+      ...current,
+      targetDistance: selectedUnitToMeters(numeric, targetDistanceUnit),
+    }));
+  };
+
   // Pasternack-style calculation. Two modes:
   //  - distance: known tilt  ->  receiver distance + inner/outer radius
   //  - angle:    known target distance + receiver height -> required downtilt angle
@@ -229,7 +265,7 @@ export default function App() {
       }));
     }
 
-    setCoverage({
+    const nextCoverage: CoverageResult = {
       mode: solveMode,
       downtiltAngle,
       receiverDistance,
@@ -240,7 +276,12 @@ export default function App() {
       heightDifference: heightDiff,
       verticalBeamwidth: form.verticalBeamwidth,
       beams: beamResults,
-    });
+    };
+
+    setCoverage(nextCoverage);
+    if (showProfileOnCalculate) {
+      void loadElevationProfile(undefined, nextCoverage);
+    }
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       setSidebarOpen(false);
     }
@@ -252,6 +293,7 @@ export default function App() {
   const handleSiteChange = useCallback((lat: number, lon: number) => {
     setForm((current) => ({ ...current, latitude: lat, longitude: lon, dtmHeight: 0 }));
     setDtmFetching(true);
+    setLegendStats({});
   }, []);
 
   // Elevation profile intersections are used only inside the chart itself.
@@ -276,13 +318,17 @@ export default function App() {
     return `${text} ${unit}`;
   };
 
-  const loadElevationProfile = async (rangeOverride?: number | "auto") => {
-    if (!coverage && !rangeOverride) return;
+  const loadElevationProfile = async (
+    rangeOverride?: number | "auto",
+    coverageOverride?: CoverageResult,
+  ) => {
+    const activeCoverage = coverageOverride ?? coverage;
+    if (!activeCoverage && !rangeOverride) return;
     const selectedRange = rangeOverride ?? profileRange;
     // Cover the farthest beam (the upper -3 dB ray) plus margin so every ray can
     // find its terrain intersection inside the sampled profile.
-    const farthestFlat = coverage
-      ? Math.max(...coverage.beams.map((b) => b.flatDistance))
+    const farthestFlat = activeCoverage
+      ? Math.max(...activeCoverage.beams.map((b) => b.flatDistance))
       : effectiveHeight / Math.tan((Math.max(form.tilt - form.verticalBeamwidth / 2, 0.5) * Math.PI) / 180);
     const autoDistance = Math.min(
       MAX_DISTANCE,
@@ -300,6 +346,67 @@ export default function App() {
     setProfileLoading(true);
     setProfileError(null);
     setProfileSamples([]);
+
+    const recordBeamStats = (samples: ElevationSample[]) => {
+      if (!activeCoverage) return;
+      const antennaAmsl = samples[0].elevation + form.antennaHeight;
+      const siteGround = samples[0].elevation;
+      const maxDistance = samples[samples.length - 1].distance;
+
+      // Dense interpolation (same approach the chart uses).
+      const dense: { distance: number; elevation: number }[] = [];
+      const N = 200;
+      for (let i = 0; i <= N; i++) {
+        const d = (i / N) * maxDistance;
+        let sIdx = 0;
+        while (sIdx < samples.length - 1 && samples[sIdx + 1].distance < d) sIdx++;
+        const s1 = samples[sIdx];
+        const s2 = samples[Math.min(sIdx + 1, samples.length - 1)];
+        const t = s2.distance === s1.distance ? 0 : (d - s1.distance) / (s2.distance - s1.distance);
+        dense.push({ distance: d, elevation: s1.elevation + t * (s2.elevation - s1.elevation) });
+      }
+
+      const statForBeam = (beamName: string): BeamStat | undefined => {
+        const beam = activeCoverage.beams.find((b) => b.name === beamName);
+        if (!beam) return undefined;
+        const rayHeight = (a: number, d: number) =>
+          antennaAmsl - Math.tan((a * Math.PI) / 180) * d;
+
+        let hit: { distance: number; elevation: number } | null = null;
+        for (let i = 0; i < dense.length - 1; i++) {
+          const p1 = dense[i];
+          const p2 = dense[i + 1];
+          const r1 = rayHeight(beam.angle, p1.distance);
+          const r2 = rayHeight(beam.angle, p2.distance);
+          const diff1 = p1.elevation - r1;
+          const diff2 = p2.elevation - r2;
+          if ((diff1 <= 0 && diff2 >= 0) || (diff1 >= 0 && diff2 <= 0)) {
+            const frac = Math.abs(diff1) / (Math.abs(diff1) + Math.abs(diff2) || 1);
+            hit = {
+              distance: p1.distance + frac * (p2.distance - p1.distance),
+              elevation: p1.elevation + frac * (p2.elevation - p1.elevation),
+            };
+            break;
+          }
+        }
+
+        if (!hit) return { status: "clear" };
+        // Blockage = how far the blocking terrain rises above the site ground.
+        const block = Math.max(0, Math.round(hit.elevation - siteGround));
+        return {
+          status: "blocked",
+          distance: Math.round(hit.distance),
+          elevation: Math.round(hit.elevation),
+          block,
+        };
+      };
+
+      setLegendStats({
+        inner: statForBeam("Lower -3 dB"),
+        center: statForBeam("Central"),
+        outer: statForBeam("Upper -3 dB"),
+      });
+    };
 
     try {
       // --- STEP 1: ROUTE SAMPLING (64 points sampled along azimuth via geodesic destinationPointWgs84) ---
@@ -333,6 +440,7 @@ export default function App() {
         elevation: elevations[i] ?? 0,
       }));
 
+      recordBeamStats(validSamples);
       setProfileSamples(validSamples);
     } catch {
       // Fallback to OpenTopoData if Open-Meteo is unreachable
@@ -353,15 +461,16 @@ export default function App() {
         if (!resFallback.ok) throw new Error("Fallback failed");
         const jsonFallback = (await resFallback.json()) as { results?: { elevation?: number | null }[] };
         const rawSamples = jsonFallback.results ?? [];
-        const validSamples = rawSamples
+        const fallbackSamples = rawSamples
           .map((sample, index) => ({
             distance: (profileDistance * index) / Math.max(rawSamples.length - 1, 1),
             elevation: sample.elevation,
           }))
           .filter((sample): sample is ElevationSample => typeof sample.elevation === "number");
 
-        if (validSamples.length < 2) throw new Error("No fallback samples");
-        setProfileSamples(validSamples);
+        if (fallbackSamples.length < 2) throw new Error("No fallback samples");
+        recordBeamStats(fallbackSamples);
+        setProfileSamples(fallbackSamples);
       } catch {
         setProfileError("Terrain data could not be loaded. Check your connection and try again.");
       }
@@ -703,7 +812,7 @@ ${placemarks}
 
         {/* Parameters panel — slides in/out from the left */}
         <aside
-          className={`absolute inset-y-0 left-0 z-30 flex w-[92%] max-w-[420px] min-h-0 flex-col overflow-y-auto bg-white text-xs shadow-xl transition-transform duration-300 md:static md:z-auto md:w-96 md:flex md:flex-col md:overflow-hidden md:border-r md:border-slate-200 md:shadow-none ${
+          className={`absolute inset-y-0 left-0 z-30 flex w-[90%] max-w-[400px] min-h-0 flex-col overflow-y-auto bg-white text-xs shadow-xl transition-transform duration-300 md:static md:z-auto md:w-88 md:flex md:flex-col md:overflow-hidden md:border-r md:border-slate-200 md:shadow-none ${
             sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0 md:hidden"
           }`}
         >
@@ -745,16 +854,25 @@ ${placemarks}
               {solveMode === "distance" ? (
                 <Field label="Tilt" suffix="deg" step="0.1" value={form.tilt} onChange={(v) => updateNumber("tilt", v)} />
               ) : (
-                <Field label="Distance" suffix="m" value={form.targetDistance} onChange={(v) => updateNumber("targetDistance", v)} />
+                <Field
+                  label="Distance"
+                  suffix={targetDistanceUnit}
+                  step={targetDistanceUnit === "km" ? "0.001" : "1"}
+                  value={distanceToSelectedUnit(form.targetDistance, targetDistanceUnit)}
+                  onChange={updateTargetDistance}
+                  unitOptions={["m", "km", "ft"]}
+                  onUnitChange={(unit) => setTargetDistanceUnit(unit as DistanceUnit)}
+                />
               )}
               <Field label="Horiz BW" suffix="deg" value={form.horizontalBeamwidth} onChange={(v) => updateNumber("horizontalBeamwidth", v)} />
               <Field label="Vert BW" suffix="deg" value={form.verticalBeamwidth} onChange={(v) => updateNumber("verticalBeamwidth", v)} />
             </div>
 
-            <label className="mt-4 flex cursor-pointer items-center justify-between gap-2 border border-slate-200 bg-slate-50/50 rounded-lg px-3 py-2.5 text-[11px] uppercase tracking-wider font-medium hover:bg-slate-100/50 transition">
-              <span>
+            {/* Toggles — compact rows */}
+            <label className="mt-4 flex cursor-pointer items-center justify-between gap-2 rounded-md bg-blue-50/70 px-2.5 py-1.5 ring-1 ring-blue-100/70 transition hover:bg-blue-50">
+              <span className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-800">
                 Include DTM
-                <span className="block text-[10px] normal-case font-normal text-slate-500">
+                <span className="block text-[9.5px] font-normal normal-case tracking-normal text-slate-500">
                   Effective = ant. + {form.includeDtm ? "DTM" : "0"}
                 </span>
               </span>
@@ -764,38 +882,53 @@ ${placemarks}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, includeDtm: event.target.checked }))
                 }
-                className="h-4 w-4 accent-slate-900 rounded cursor-pointer"
+                className="h-3.5 w-3.5 accent-blue-600 rounded cursor-pointer"
               />
             </label>
-          </div>
+            <label className="mt-1.5 flex cursor-pointer items-center justify-between gap-2 rounded-md bg-blue-50/70 px-2.5 py-1.5 ring-1 ring-blue-100/70 transition hover:bg-blue-50">
+              <span className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-800">
+                Show Elevation Chart
+                <span className="block text-[9.5px] font-normal normal-case tracking-normal text-slate-500">
+                  {showProfileOnCalculate ? "Open after Calculate" : "Do not open profile"}
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={showProfileOnCalculate}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setShowProfileOnCalculate(checked);
+                  if (!checked) {
+                    setShowElevationChart(false);
+                    setHoverLocation(null);
+                  } else if (coverage) {
+                    void loadElevationProfile();
+                  }
+                }}
+                className="h-3.5 w-3.5 accent-blue-600 rounded cursor-pointer"
+              />
+            </label>
 
-          {/* Action buttons — inline after inputs on mobile, pinned to bottom on desktop */}
-          <div className="mt-5 px-3 pb-5 md:mt-0 md:shrink-0 md:border-t md:border-slate-200 md:py-3">
-            <div className="flex flex-col gap-2">
+            {/* Action buttons — 1 button per row, below the toggles */}
+            <div className="mt-8 flex flex-col gap-2">
               <button
                 onClick={handleCalculate}
-                className="btn-black block w-full text-center text-xs uppercase tracking-wider"
+                className="w-full rounded-lg bg-slate-900 py-2 text-center text-[11px] font-bold uppercase tracking-wider text-white shadow-sm transition hover:bg-black"
               >
                 Calculate
               </button>
               <button
-                onClick={() => void loadElevationProfile()}
-                disabled={!coverage}
-                className="btn-black block w-full text-center text-xs uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
-                title={!coverage ? "Calculate coverage first" : "Open terrain profile"}
-              >
-                Elevation Chart
-              </button>
-              <button
                 onClick={onExportKml}
                 disabled={!coverage}
-                className="btn-black block w-full text-center text-xs uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                className="w-full rounded-lg bg-blue-600 py-2 text-center text-[11px] font-bold uppercase tracking-wider text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                 title={!coverage ? "Calculate coverage first" : "Download Google Earth KML"}
               >
                 Export KML
               </button>
             </div>
           </div>
+
+          <div className="pb-4" />
 
         </aside>
 
@@ -824,6 +957,7 @@ ${placemarks}
                 { id: "light" as const, label: "Map" },
                 { id: "streets" as const, label: "Street" },
                 { id: "satellite" as const, label: "Sat" },
+                { id: "topo" as const, label: "Topo" },
               ]).map((opt) => (
                 <button
                   key={opt.id}
@@ -877,22 +1011,63 @@ ${placemarks}
                       {summary.downtiltAngle.toFixed(2)}°
                     </span>
                   </div>
-                  <LegendRow
+
+                  {/* Part 1 — Calculated (flat-earth) coverage */}
+                  <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                    Calculated
+                  </p>
+                  <LegendSimpleRow
                     color="#f97316"
-                    label="Inner radius"
+                    label="Inner"
                     value={formatCoverage(summary.innerRadius)}
                   />
-                  <LegendRow
+                  <LegendSimpleRow
                     color="#eab308"
-                    label="Central beam"
+                    label="Center"
                     value={formatCoverage(summary.receiverDistance)}
                     active={summary.mode === "distance"}
                   />
-                  <LegendRow
+                  <LegendSimpleRow
                     color="#06b6d4"
-                    label="Outer radius"
+                    label="Outer"
                     value={formatCoverage(summary.outerRadius)}
                   />
+
+                  {/* Part 2 — Actual (terrain-adjusted) from elevation chart */}
+                  {(legendStats.inner || legendStats.center || legendStats.outer) && (
+                    <>
+                      <p className="mb-1 mt-2 border-t border-slate-100 pt-2 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                        Actual (terrain)
+                      </p>
+                      <LegendSimpleRow
+                        color="#f97316"
+                        label="Inner"
+                        value={
+                          legendStats.inner?.status === "blocked"
+                            ? `${legendStats.inner.distance} m`
+                            : "clear"
+                        }
+                      />
+                      <LegendSimpleRow
+                        color="#eab308"
+                        label="Center"
+                        value={
+                          legendStats.center?.status === "blocked"
+                            ? `${legendStats.center.distance} m`
+                            : "clear"
+                        }
+                      />
+                      <LegendSimpleRow
+                        color="#06b6d4"
+                        label="Outer"
+                        value={
+                          legendStats.outer?.status === "blocked"
+                            ? `${legendStats.outer.distance} m`
+                            : "clear"
+                        }
+                      />
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -918,60 +1093,54 @@ ${placemarks}
           {/* Terrain profile — docked strip below the map on all screens */}
           {showElevationChart && (
             <section className="flex shrink-0 flex-col border-t border-slate-200 bg-white relative z-[510]">
-              <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-1.5">
-                <div className="flex items-center justify-between gap-3 sm:justify-start">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
-                    Terrain Elevation Profile
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setShowElevationChart(false); setHoverLocation(null); }}
-                    className="rounded-md border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 sm:hidden"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Range</span>
-                  <input
-                    type="range"
-                    min="500"
-                    max="15000"
-                    step="100"
-                    value={profileRange === "auto" ? 3000 : profileRange}
-                    onChange={(e) => setProfileRange(Number(e.target.value))}
-                    onMouseUp={() => {
-                      if (profileSamples.length > 1) setTimeout(() => loadElevationProfile(), 0);
-                    }}
-                    onTouchEnd={() => {
-                      if (profileSamples.length > 1) setTimeout(() => loadElevationProfile(), 0);
-                    }}
-                    className="h-0.5 w-24 sm:w-28 cursor-pointer appearance-none bg-slate-300 accent-slate-950 focus:outline-none"
-                  />
-                  <span className="w-12 font-mono text-[10px] font-bold text-slate-800">
-                    {profileRange === "auto" ? "Auto" : `${(profileRange / 1000).toFixed(1)} km`}
-                  </span>
-                  <span className="mx-0.5 h-3 w-px bg-slate-300" />
-                  <label className="flex items-center gap-1.5 text-[9px] font-semibold text-slate-500">
-                    Unit
-                    <select
-                      value={distanceUnit}
-                      onChange={(e) => setDistanceUnit(e.target.value as DistanceUnit)}
-                      className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 outline-none"
-                    >
-                      <option value="km">km</option>
-                      <option value="m">m</option>
-                      <option value="ft">ft</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => { setShowElevationChart(false); setHoverLocation(null); }}
-                    className="hidden rounded-md border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 sm:block"
-                  >
-                    Close
-                  </button>
-                </div>
+              {/* Single-row toolbar; scrolls horizontally on very small screens */}
+              <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2 py-2.5 sm:gap-3 sm:px-4">
+                <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-slate-600 sm:text-[10px]">
+                  Terrain Elevation Profile
+                </span>
+                <span className="ml-auto shrink-0 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                  Range
+                </span>
+                <input
+                  type="range"
+                  min="50"
+                  max="15000"
+                  step="10"
+                  value={profileRange === "auto" ? 3000 : profileRange}
+                  onChange={(e) => setProfileRange(Number(e.target.value))}
+                  onMouseUp={(e) => {
+                    if (profileSamples.length > 1) {
+                      void loadElevationProfile(Number(e.currentTarget.value));
+                    }
+                  }}
+                  onTouchEnd={(e) => {
+                    if (profileSamples.length > 1) {
+                      void loadElevationProfile(Number(e.currentTarget.value));
+                    }
+                  }}
+                  className="h-0.5 w-32 shrink-0 cursor-pointer appearance-none bg-slate-300 accent-slate-950 focus:outline-none sm:w-48"
+                />
+                <span className="w-12 shrink-0 font-mono text-[9px] font-bold text-slate-800 sm:w-14 sm:text-[10px]">
+                  {profileRange === "auto" ? "3000 m" : `${profileRange.toFixed(0)} m`}
+                </span>
+                <span className="h-3 w-px shrink-0 bg-slate-300" />
+                <select
+                  value={distanceUnit}
+                  onChange={(e) => setDistanceUnit(e.target.value as DistanceUnit)}
+                  aria-label="Distance unit"
+                  className="shrink-0 rounded border border-slate-200 bg-white px-1 py-0.5 text-[9px] font-semibold text-slate-700 outline-none sm:px-1.5 sm:text-[10px]"
+                >
+                  <option value="km">km</option>
+                  <option value="m">m</option>
+                  <option value="ft">ft</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => { setShowElevationChart(false); setHoverLocation(null); }}
+                  className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-600 hover:bg-slate-50 sm:px-2.5 sm:text-[10px]"
+                >
+                  Close
+                </button>
               </div>
               <div className="px-2 py-2 sm:px-3">
                 {profileLoading && (
@@ -1057,31 +1226,36 @@ function LayerToggle({
   );
 }
 
-function LegendRow({
+function LegendSimpleRow({
   color,
   label,
   value,
+  sub,
   active = false,
 }: {
   color: string;
   label: string;
   value: string;
+  sub?: string;
   active?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 py-1">
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="flex items-center justify-between gap-2 py-0.5">
+      <div className="flex min-w-0 items-center gap-2">
         <span
-          className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white"
+          className="h-2 w-2 shrink-0 rounded-full ring-2 ring-white"
           style={{ backgroundColor: color, boxShadow: `0 0 0 1px ${color}55` }}
         />
-        <span className={`truncate text-[11px] ${active ? "font-bold text-slate-900" : "text-slate-600"}`}>
+        <span className={`text-[10.5px] ${active ? "font-bold text-slate-900" : "text-slate-600"}`}>
           {label}
         </span>
       </div>
-      <span className={`shrink-0 font-mono text-[11px] font-bold ${active ? "text-indigo-600" : "text-slate-800"}`}>
-        {value}
-      </span>
+      <div className="flex shrink-0 items-baseline gap-1.5">
+        {sub && <span className="font-mono text-[8.5px] text-rose-500">{sub}</span>}
+        <span className={`font-mono text-[10.5px] font-bold ${active ? "text-indigo-600" : "text-slate-800"}`}>
+          {value}
+        </span>
+      </div>
     </div>
   );
 }
@@ -1092,12 +1266,16 @@ function Field({
   step = "1",
   suffix,
   onChange,
+  unitOptions,
+  onUnitChange,
 }: {
   label: string;
   value: number;
   step?: string;
   suffix?: string;
   onChange: (value: string) => void;
+  unitOptions?: string[];
+  onUnitChange?: (unit: string) => void;
 }) {
   // Local text buffer so the field can be fully cleared while editing.
   // It syncs from the numeric prop only when that prop actually changes.
@@ -1124,11 +1302,28 @@ function Field({
           onBlur={() => setText(String(value))}
           className="w-full bg-transparent px-2.5 py-1.5 text-[12px] text-slate-800 outline-none"
         />
-        {suffix && (
-          <span className="flex w-12 items-center justify-center border-l border-slate-200 bg-slate-50 py-1.5 text-[10px] text-slate-500 font-medium">
-            {suffix}
-          </span>
-        )}
+        {suffix &&
+          (unitOptions && onUnitChange ? (
+            <div className="relative flex w-12 shrink-0 items-center justify-center border-l border-slate-200 bg-slate-50 py-1.5 text-[10px] text-slate-500 font-medium hover:bg-slate-100 transition">
+              <select
+                value={suffix}
+                onChange={(event) => onUnitChange(event.target.value)}
+                aria-label={`${label} unit`}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              >
+                {unitOptions.map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
+              <span>{suffix}</span>
+            </div>
+          ) : (
+            <span className="flex w-12 shrink-0 items-center justify-center border-l border-slate-200 bg-slate-50 py-1.5 text-[10px] text-slate-500 font-medium">
+              {suffix}
+            </span>
+          ))}
       </div>
     </label>
   );
