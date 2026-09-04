@@ -6,8 +6,6 @@ TiltPlane is a React + Vite web application for calculating antenna tilt planes 
 
 - **Click anywhere on the map** to move the antenna site.
 - Base layers (free, no API key):
-  - **Light** — CARTO basemap
-  - **Streets** — OpenStreetMap
   - **Satellite** — Esri World Imagery
 - Overlays: coverage rings (1/2/3 km), cell name label, demo neighbor cellfile sites (G-NetLook style).
 - An internet connection is required to load map tiles.
