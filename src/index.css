@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/* shadcn theme tokens (dark) so components/ui can use bg-muted, border-border, bg-card, etc. */
+@theme {
+  --color-background: #020617;
+  --color-foreground: #e2e8f0;
+  --color-card: #0f172a;
+  --color-card-foreground: #e2e8f0;
+  --color-muted: #16233b;
+  --color-muted-foreground: #94a3b8;
+  --color-border: #2b3b55;
+  --color-input: #2b3b55;
+  --color-ring: #38bdf8;
+  --color-primary: #38bdf8;
+  --color-primary-foreground: #082f49;
+  --color-secondary: #1e293b;
+  --color-secondary-foreground: #e2e8f0;
+  --color-accent: #1e293b;
+  --color-accent-foreground: #f1f5f9;
+  --color-destructive: #f43f5e;
+  --color-destructive-foreground: #ffffff;
+}
+
+@keyframes tp-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #020617;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- scrollbars ------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 9999px;
+}
+
+/* ---- range sliders ---------------------------------------------------- */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: currentColor;
+  border: 2px solid #020617;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: currentColor;
+  border: 2px solid #020617;
+  cursor: pointer;
+}
+input[type="range"] {
+  color: #38bdf8;
+}
+
+/* ---- leaflet dark theme ---------------------------------------------- */
+.leaflet-container {
+  background: #020617;
+  font-family: inherit;
+  font-size: 12px;
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+.leaflet-bar a {
+  border-bottom-color: #334155 !important;
+}
+.leaflet-bar a:hover {
+  background: #1e293b;
+}
+.leaflet-bar a.leaflet-disabled {
+  background: #0f172a;
+  color: #475569;
+}
+.leaflet-control-attribution {
+  background: rgba(2, 6, 23, 0.7) !important;
+  color: #94a3b8 !important;
+  font-size: 10px;
+}
+.leaflet-control-attribution a {
+  color: #7dd3fc !important;
+}
+
+.leaflet-tooltip.tp-tooltip {
+  background: #0f172a;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 6px 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+}
+.leaflet-tooltip.tp-tooltip::before {
+  border-top-color: #334155;
+}
+@keyframes tp-pulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
